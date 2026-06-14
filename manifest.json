@@ -1,0 +1,10 @@
+{
+  "Name": "StardewAI",
+  "Author": "bkennedyshit",
+  "Version": "0.1.0",
+  "Description": "Natural language AI assistant for Stardew Valley. Reads your farm state and acts intelligently.",
+  "UniqueID": "bkennedyshit.StardewAI",
+  "EntryDll": "StardewAI.dll",
+  "MinimumApiVersion": "4.0.0",
+  "Dependencies": []
+}

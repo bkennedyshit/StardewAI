@@ -1,0 +1,17 @@
+{
+  "BaseUrl": "http://localhost:11434/v1",
+  "Model": "hermes3:8b",
+  "ApiKey": "",
+  "Hotkey": "F8",
+  "Temperature": 0.2,
+  "MaxTokens": 1024,
+  "HistoryTurns": 6,
+  "TimeoutSeconds": 30,
+  "Stream": true,
+  "UseFunctionCalling": false,
+  "EnableOverlay": true,
+  "OverlayPort": 8473,
+  "EnableMcpServer": false,
+  "McpPort": 8474,
+  "BlockedItemIds": []
+}
