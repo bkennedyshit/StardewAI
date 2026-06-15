@@ -116,6 +116,16 @@ Ollama isn't running or `BaseUrl` is wrong. Start Ollama and confirm `ollama lis
 **The AI tried to give me a broken/invalid item.**
 StardewAI validates every item before spawning it and refuses unknown or "error" items, so they never end up in your inventory or dropped on the ground. To block a *specific* valid item too, add its id to `BlockedItemIds` in `config.json`.
 
+## Credits
+
+StardewAI is MIT-licensed and open source. No third-party files are bundled in the download — the mod ships only its own compiled assembly and manifest, and references everything else at runtime.
+
+- **SMAPI** by Pathoschild — the modding platform this runs on.
+- **Harmony** by Andreas Pardeike (pardeike) — used to hook the in-game chat box.
+- **Newtonsoft.Json** by James Newton-King — JSON handling (provided by SMAPI).
+- **Stardew Valley** by ConcernedApe — the Junimo helper uses the game's own sprite, loaded at runtime (no assets redistributed).
+- **Ollama** and the open-source model community — the local LLM runtime.
+
 ## Open Source
 Built with open-source models in mind. Feel free to inspect, fork, or modify the code! 
 All logic runs locally; no secrets, no telemetry.
