@@ -256,7 +256,12 @@ AVAILABLE ACTION TYPES:
 - cancelTask () — stops and removes the elf helper.
 - message ()
 
-Respond ONLY with the JSON object.";
+Respond ONLY with the JSON object.
+
+RULES:
+- When the player asks you to do something (warp, give items, change weather, etc.), ALWAYS include the matching action. Do NOT refuse, and do NOT skip an action because you assume it's unnecessary.
+- For warp/teleport requests, ALWAYS emit a warp action with the location — even if you think the player might already be there. The player's current location is in Player.Location; trust it over guessing.
+- Never claim you can't do something that maps to an available action. Just emit the action.";
         }
     }
 }

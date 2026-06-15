@@ -25,6 +25,7 @@ namespace StardewAI
     public class PlayerState
     {
         public string Name { get; set; }
+        public string Location { get; set; }
         public int Money { get; set; }
         public int Energy { get; set; }
         public int MaxEnergy { get; set; }
@@ -109,6 +110,7 @@ namespace StardewAI
             return new PlayerState
             {
                 Name = player.Name,
+                Location = Game1.currentLocation?.Name ?? "Unknown",
                 Money = player.Money,
                 Energy = (int)player.Stamina,
                 MaxEnergy = player.MaxStamina,
