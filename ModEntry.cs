@@ -42,6 +42,7 @@ namespace StardewAI
             helper.Events.Input.ButtonPressed += OnButtonPressed;
             helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
             helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
+            helper.Events.GameLoop.ReturnedToTitle += OnReturnedToTitle;
 
             var harmony = new Harmony(this.ModManifest.UniqueID);
             harmony.Patch(
@@ -87,6 +88,13 @@ namespace StardewAI
             }
         }
 
+        private void OnReturnedToTitle(object sender, ReturnedToTitleEventArgs e)
+        {
+            // Free the model from memory when leaving a save (it re-warms on the next SaveLoaded).
+            if (Config.WarmUpModel)
+                Task.Run(() => Bridge.UnloadModel());
+        }
+
         private void OnUpdateTicked(object sender, UpdateTickedEventArgs e)
         {
             // Drain the queue on the main game thread
@@ -112,6 +120,14 @@ namespace StardewAI
                     OverlayServer.UpdateSnapshot(StateDigestBuilder.Build(), ActionExecutor.LastAction);
                 }
                 catch { /* snapshot best-effort */ }
+            }
+
+            // Keep the model loaded while playing (re-pin every ~2 min, under the 5-min session
+            // keep-alive) so it never drops out mid-session. When the game closes, these stop and
+            // Ollama unloads the model on its own.
+            if (Config.WarmUpModel && Context.IsWorldReady && e.IsMultipleOf(7200))
+            {
+                Task.Run(() => Bridge.WarmUp());
             }
         }
 

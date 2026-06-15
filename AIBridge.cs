@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -161,33 +162,62 @@ namespace StardewAI
             }
         }
 
+        /// <summary>True if the endpoint looks like a local Ollama (default port 11434).</summary>
+        private bool LooksLikeOllama => Config.BaseUrl.Contains(":11434");
+
         /// <summary>
-        /// Fire a tiny request to nudge the endpoint into loading the model into memory, so the
-        /// player's first real request isn't a slow cold load. Fully fire-and-forget; failures are
-        /// only logged at trace level and never surfaced to the player.
+        /// Keep-alive (seconds) used while a save is loaded. Finite on purpose: the mod re-pins
+        /// every couple minutes while you play, so the model stays loaded for the session — but once
+        /// the game closes and the re-pins stop, Ollama unloads it on its own, freeing your VRAM.
         /// </summary>
-        public async Task WarmUp()
+        private const int SessionKeepAliveSeconds = 300;
+
+        /// <summary>The Ollama native API base (BaseUrl without the trailing /v1).</summary>
+        private string OllamaBase()
+        {
+            string b = Config.BaseUrl.TrimEnd('/');
+            if (b.EndsWith("/v1"))
+                b = b.Substring(0, b.Length - "/v1".Length);
+            return b.TrimEnd('/');
+        }
+
+        /// <summary>
+        /// Load the model and keep it resident for the session. Called when a save loads and
+        /// re-called periodically while playing so it never idle-unloads mid-session.
+        /// </summary>
+        public Task WarmUp() => SetKeepAlive(SessionKeepAliveSeconds, "warm-up", 15);
+
+        /// <summary>
+        /// Unload the model from memory immediately (keep_alive = 0) to free VRAM when leaving a
+        /// save. Short timeout so it never blocks.
+        /// </summary>
+        public Task UnloadModel() => SetKeepAlive(0, "unload", 3);
+
+        /// <summary>
+        /// Set the model's keep_alive via Ollama's native /api/generate (which reliably honors it).
+        /// Fully fire-and-forget; failures are only logged at trace level. No-op for non-Ollama
+        /// endpoints (their /api/generate won't exist, which is caught and ignored).
+        /// </summary>
+        private async Task SetKeepAlive(int keepAlive, string label, int timeoutSeconds)
         {
             try
             {
-                var messages = new List<object>
-                {
-                    new { role = "user", content = "ping" }
-                };
+                string url = OllamaBase() + "/api/generate";
                 var body = new Dictionary<string, object>
                 {
                     ["model"] = Config.Model,
-                    ["messages"] = messages,
-                    ["max_tokens"] = 1,
+                    ["prompt"] = "",
+                    ["keep_alive"] = keepAlive,
                     ["stream"] = false
                 };
                 var content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
-                using var response = await Http.PostAsync(Url, content);
-                Monitor.Log($"Model warm-up ping sent ({(int)response.StatusCode}).", LogLevel.Trace);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSeconds));
+                using var response = await Http.PostAsync(url, content, cts.Token);
+                Monitor.Log($"Model {label} (keep_alive={keepAlive}) -> {(int)response.StatusCode}.", LogLevel.Trace);
             }
             catch (Exception ex)
             {
-                Monitor.Log($"Model warm-up skipped: {ex.GetType().Name}", LogLevel.Trace);
+                Monitor.Log($"Model {label} skipped: {ex.GetType().Name}", LogLevel.Trace);
             }
         }
 
@@ -216,6 +246,11 @@ namespace StardewAI
                 // Constrain Ollama / compatible endpoints to emit JSON.
                 body["format"] = "json";
             }
+
+            // For local Ollama, keep the model loaded for the session so a normal request doesn't
+            // shorten the idle-unload timer. (Ignored by other endpoints.)
+            if (LooksLikeOllama)
+                body["keep_alive"] = SessionKeepAliveSeconds;
 
             return body;
         }
