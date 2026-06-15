@@ -17,6 +17,12 @@ namespace StardewAI
         private readonly IMonitor Monitor;
         private readonly HttpClient Http;
 
+        /// <summary>
+        /// A player-facing description of the most recent failure (timeout vs. unreachable vs. other),
+        /// or null if the last request succeeded. ModEntry shows this in the HUD.
+        /// </summary>
+        public string? LastError { get; private set; }
+
         public AIBridge(ModConfig config, IMonitor monitor)
         {
             Config = config;
@@ -32,6 +38,20 @@ namespace StardewAI
         }
 
         private string Url => Config.BaseUrl.TrimEnd('/') + "/chat/completions";
+
+        /// <summary>Map an exception to an honest, actionable player-facing message.</summary>
+        private string DescribeError(Exception ex)
+        {
+            switch (ex)
+            {
+                case TaskCanceledException _:
+                    return $"The AI model timed out after {Config.TimeoutSeconds}s — it may still be loading. Try again in a few seconds.";
+                case HttpRequestException _:
+                    return "Couldn't reach the AI model. Is Ollama running? (check the BaseUrl in config.json)";
+                default:
+                    return "The AI request failed unexpectedly. See the SMAPI log for details.";
+            }
+        }
 
         /// <summary>
         /// Non-streaming request. Returns the executor-ready JSON string (a {reasoning,message,actions}
@@ -50,13 +70,19 @@ namespace StardewAI
                 if (!response.IsSuccessStatusCode)
                 {
                     Monitor.Log($"API error ({response.StatusCode}): {responseStr}", LogLevel.Error);
+                    LastError = $"The AI model returned an error ({(int)response.StatusCode}). Is the model name in config.json correct?";
                     return null;
                 }
 
                 var parsed = JObject.Parse(responseStr);
                 var message = parsed["choices"]?[0]?["message"] as JObject;
                 if (message == null)
+                {
+                    LastError = "The AI model returned an empty response.";
                     return null;
+                }
+
+                LastError = null;
 
                 // Function-calling mode: convert tool_calls into our actions array.
                 if (Config.UseFunctionCalling && message["tool_calls"] is JArray)
@@ -64,14 +90,10 @@ namespace StardewAI
 
                 return message["content"]?.ToString();
             }
-            catch (TaskCanceledException)
-            {
-                Monitor.Log("AI model request timed out.", LogLevel.Error);
-                return null;
-            }
             catch (Exception ex)
             {
-                Monitor.Log($"AIBridge exception: {ex.Message}", LogLevel.Error);
+                LastError = DescribeError(ex);
+                Monitor.Log($"AIBridge request failed: {ex.GetType().Name}: {ex.Message}", LogLevel.Error);
                 return null;
             }
         }
@@ -94,6 +116,7 @@ namespace StardewAI
                 {
                     var err = await response.Content.ReadAsStringAsync();
                     Monitor.Log($"API error ({response.StatusCode}): {err}", LogLevel.Error);
+                    LastError = $"The AI model returned an error ({(int)response.StatusCode}). Is the model name in config.json correct?";
                     return null;
                 }
 
@@ -127,17 +150,44 @@ namespace StardewAI
                     }
                 }
 
+                LastError = null;
                 return sb.ToString();
-            }
-            catch (TaskCanceledException)
-            {
-                Monitor.Log("AI model request timed out (stream).", LogLevel.Error);
-                return null;
             }
             catch (Exception ex)
             {
-                Monitor.Log($"AIBridge stream exception: {ex.Message}", LogLevel.Error);
+                LastError = DescribeError(ex);
+                Monitor.Log($"AIBridge stream request failed: {ex.GetType().Name}: {ex.Message}", LogLevel.Error);
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Fire a tiny request to nudge the endpoint into loading the model into memory, so the
+        /// player's first real request isn't a slow cold load. Fully fire-and-forget; failures are
+        /// only logged at trace level and never surfaced to the player.
+        /// </summary>
+        public async Task WarmUp()
+        {
+            try
+            {
+                var messages = new List<object>
+                {
+                    new { role = "user", content = "ping" }
+                };
+                var body = new Dictionary<string, object>
+                {
+                    ["model"] = Config.Model,
+                    ["messages"] = messages,
+                    ["max_tokens"] = 1,
+                    ["stream"] = false
+                };
+                var content = new StringContent(JsonConvert.SerializeObject(body), Encoding.UTF8, "application/json");
+                using var response = await Http.PostAsync(Url, content);
+                Monitor.Log($"Model warm-up ping sent ({(int)response.StatusCode}).", LogLevel.Trace);
+            }
+            catch (Exception ex)
+            {
+                Monitor.Log($"Model warm-up skipped: {ex.GetType().Name}", LogLevel.Trace);
             }
         }
 

@@ -41,6 +41,7 @@ namespace StardewAI
 
             helper.Events.Input.ButtonPressed += OnButtonPressed;
             helper.Events.GameLoop.UpdateTicked += OnUpdateTicked;
+            helper.Events.GameLoop.SaveLoaded += OnSaveLoaded;
 
             var harmony = new Harmony(this.ModManifest.UniqueID);
             harmony.Patch(
@@ -74,6 +75,16 @@ namespace StardewAI
             __instance.chatBox.Text = "";
             Game1.closeTextEntry();
             return false; // skip original method
+        }
+
+        private void OnSaveLoaded(object sender, SaveLoadedEventArgs e)
+        {
+            // Warm the model in the background so the first real request isn't a slow cold load.
+            if (Config.WarmUpModel)
+            {
+                Monitor.Log("Warming up the AI model in the background...", LogLevel.Trace);
+                Task.Run(() => Bridge.WarmUp());
+            }
         }
 
         private void OnUpdateTicked(object sender, UpdateTickedEventArgs e)
@@ -206,8 +217,10 @@ namespace StardewAI
                 }
                 else
                 {
-                    // Enqueue an error to display on main thread
-                    ActionQueue.Enqueue("{\"message\":\"Failed to contact AI.\"}");
+                    // Surface an honest, specific reason (timeout vs unreachable vs other).
+                    string err = Bridge.LastError ?? "The AI request failed.";
+                    var errJson = new Newtonsoft.Json.Linq.JObject { ["message"] = err }.ToString();
+                    ActionQueue.Enqueue(errJson);
                 }
             });
         }

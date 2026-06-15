@@ -1,10 +1,11 @@
 {
   "Name": "StardewAI",
   "Author": "bkennedyshit",
-  "Version": "0.1.0",
-  "Description": "Natural language AI assistant for Stardew Valley. Reads your farm state and acts intelligently.",
+  "Version": "0.2.0",
+  "Description": "Plug Stardew's chat box into a local LLM. Type what you want in plain English and the AI triggers instant cheats and actions — fully local, free, open source.",
   "UniqueID": "bkennedyshit.StardewAI",
   "EntryDll": "StardewAI.dll",
   "MinimumApiVersion": "4.0.0",
+  "UpdateKeys": [ "GitHub:bkennedyshit/StardewAI" ],
   "Dependencies": []
 }

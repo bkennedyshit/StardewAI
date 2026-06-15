@@ -11,7 +11,19 @@ namespace StardewAI
         public double Temperature { get; set; } = 0.2;
         public int MaxTokens { get; set; } = 1024;
         public int HistoryTurns { get; set; } = 6;
-        public int TimeoutSeconds { get; set; } = 30;
+
+        /// <summary>
+        /// How long to wait for the model before giving up. A cold model load (first request after
+        /// the model isn't resident yet) can be slow, so this is generous by default.
+        /// </summary>
+        public int TimeoutSeconds { get; set; } = 60;
+
+        /// <summary>
+        /// Send one tiny background request when a save loads, so the model is warm (loaded into
+        /// memory) before the player's first real request — avoids a cold-load timeout. Costs one
+        /// trivial request per session. Set false to disable.
+        /// </summary>
+        public bool WarmUpModel { get; set; } = true;
 
         // --- Phase 2 options ---
 
