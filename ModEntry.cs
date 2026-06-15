@@ -247,7 +247,7 @@ AVAILABLE ACTION TYPES:
 - addMoney (amount)
 - setTime (time)
 - setDay (day)
-- warp (location)
+- warp (location) — prefer common place names like Farm, Town, Beach, Mountain, Forest, Saloon, Ginger Island, Marnie's Ranch, the Spa, the Desert, the Mines; the mod resolves these to the game's internal names.
 - setSkillXp (skill, xp)
 - setFriendship (npc, points)
 - waterAllCrops ()

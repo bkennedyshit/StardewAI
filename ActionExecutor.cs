@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Xna.Framework;
 using Newtonsoft.Json.Linq;
 using StardewModdingAPI;
@@ -273,21 +274,136 @@ namespace StardewAI
 
         private static void Warp(JToken action)
         {
-            string locationName = action["location"]?.ToString();
-            if (string.IsNullOrEmpty(locationName)) return;
+            string raw = action["location"]?.ToString()?.Trim();
+            if (string.IsNullOrEmpty(raw)) return;
 
-            var loc = Game1.getLocationFromName(locationName);
-            if (loc != null)
+            string resolved = ResolveLocationName(raw);
+            if (resolved == null)
             {
-                // Try to find a sensible warp point or default to 10,10
-                Game1.warpFarmer(locationName, 10, 10, false);
-                Monitor.Log($"Warped to: {locationName}", LogLevel.Info);
+                Monitor.Log($"Unknown location: {raw}", LogLevel.Warn);
+                Game1.addHUDMessage(new HUDMessage($"I couldn't find a location called '{raw}', so I didn't warp you.", HUDMessage.error_type));
+                return;
             }
-            else
+
+            var loc = Game1.getLocationFromName(resolved);
+            Point tile = GetSafeArrivalTile(loc);
+            Game1.warpFarmer(resolved, tile.X, tile.Y, false);
+            Monitor.Log($"Warped to: {resolved} ({tile.X},{tile.Y})", LogLevel.Info);
+        }
+
+        /// <summary>
+        /// Stardew's <see cref="Game1.getLocationFromName"/> needs the exact internal name (e.g.
+        /// "AnimalShop", "IslandSouth"), but the model tends to produce friendly names ("Marnie's
+        /// Ranch", "Ginger Island"). This resolves common aliases, then falls back to a normalized
+        /// match against the real internal name and all loaded locations.
+        /// </summary>
+        private static string ResolveLocationName(string input)
+        {
+            // 1) Already a valid internal name.
+            if (Game1.getLocationFromName(input) != null)
+                return input;
+
+            // 2) Direct alias hit.
+            if (LocationAliases.TryGetValue(input, out var mapped) && Game1.getLocationFromName(mapped) != null)
+                return mapped;
+
+            // 3) Normalized alias hit (ignore case, spaces, apostrophes, "the ").
+            string norm = NormalizeName(input);
+            foreach (var kv in LocationAliases)
             {
-                Monitor.Log($"Unknown location: {locationName}", LogLevel.Warn);
+                if (NormalizeName(kv.Key) == norm && Game1.getLocationFromName(kv.Value) != null)
+                    return kv.Value;
+            }
+
+            // 4) Normalized match against every loaded location's internal name.
+            foreach (var loc in Game1.locations)
+            {
+                if (loc?.Name != null && NormalizeName(loc.Name) == norm)
+                    return loc.Name;
+            }
+
+            return null;
+        }
+
+        private static string NormalizeName(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            s = s.ToLowerInvariant();
+            if (s.StartsWith("the ")) s = s.Substring(4);
+            return new string(s.Where(char.IsLetterOrDigit).ToArray());
+        }
+
+        /// <summary>
+        /// Pick a passable tile to land on that isn't a warp tile (so the player doesn't immediately
+        /// bounce back out). Falls back to the map center, then (8,8), wrapped in try/catch.
+        /// </summary>
+        private static Point GetSafeArrivalTile(GameLocation loc)
+        {
+            try
+            {
+                int w = loc.map?.Layers?[0]?.LayerWidth ?? 40;
+                int h = loc.map?.Layers?[0]?.LayerHeight ?? 40;
+
+                var warpTiles = new HashSet<Point>();
+                foreach (var warp in loc.warps)
+                    warpTiles.Add(new Point(warp.X, warp.Y));
+
+                bool IsGood(int x, int y)
+                {
+                    if (x <= 0 || y <= 0 || x >= w || y >= h) return false;
+                    if (warpTiles.Contains(new Point(x, y))) return false;
+                    return loc.isTilePassable(new xTile.Dimensions.Location(x, y), Game1.viewport);
+                }
+
+                foreach (var c in new[] { new Point(w / 2, h / 2), new Point(8, 8), new Point(10, 10) })
+                    if (IsGood(c.X, c.Y)) return c;
+
+                for (int y = 1; y < h - 1; y++)
+                    for (int x = 1; x < w - 1; x++)
+                        if (IsGood(x, y)) return new Point(x, y);
+
+                return new Point(w / 2, h / 2);
+            }
+            catch
+            {
+                return new Point(8, 8);
             }
         }
+
+        /// <summary>Friendly name -> Stardew internal location name.</summary>
+        private static readonly Dictionary<string, string> LocationAliases = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["ginger island"] = "IslandSouth", ["island"] = "IslandSouth",
+            ["marnie's ranch"] = "AnimalShop", ["marnies ranch"] = "AnimalShop", ["marnie's"] = "AnimalShop", ["ranch"] = "AnimalShop", ["animal shop"] = "AnimalShop",
+            ["spa"] = "BathHouse_Pool", ["bathhouse"] = "BathHouse_Pool", ["bath house"] = "BathHouse_Pool",
+            ["saloon"] = "Saloon", ["stardrop saloon"] = "Saloon", ["bar"] = "Saloon",
+            ["pierre's"] = "SeedShop", ["pierres"] = "SeedShop", ["general store"] = "SeedShop", ["seed shop"] = "SeedShop",
+            ["clinic"] = "Hospital", ["harvey's clinic"] = "Hospital",
+            ["mayor's house"] = "ManorHouse", ["mayor's manor"] = "ManorHouse", ["manor"] = "ManorHouse",
+            ["blacksmith"] = "Blacksmith", ["clint's"] = "Blacksmith",
+            ["carpenter's shop"] = "ScienceHouse", ["carpenter"] = "ScienceHouse", ["robin's house"] = "ScienceHouse", ["science house"] = "ScienceHouse",
+            ["wizard's tower"] = "WizardHouse", ["wizard tower"] = "WizardHouse", ["wizard's house"] = "WizardHouse",
+            ["adventurer's guild"] = "AdventureGuild", ["adventure guild"] = "AdventureGuild", ["guild"] = "AdventureGuild",
+            ["community center"] = "CommunityCenter", ["community centre"] = "CommunityCenter",
+            ["joja"] = "JojaMart", ["joja mart"] = "JojaMart",
+            ["movie theater"] = "MovieTheater", ["theater"] = "MovieTheater", ["theatre"] = "MovieTheater",
+            ["casino"] = "Club",
+            ["fish shop"] = "FishShop", ["willy's"] = "FishShop", ["fish market"] = "FishShop",
+            ["oasis"] = "SandyHouse", ["sandy's shop"] = "SandyHouse",
+            ["desert"] = "Desert", ["calico desert"] = "Desert",
+            ["bus stop"] = "BusStop",
+            ["the mines"] = "Mine", ["mines"] = "Mine", ["mine"] = "Mine",
+            ["sewer"] = "Sewer", ["sewers"] = "Sewer",
+            ["beach"] = "Beach",
+            ["forest"] = "Forest", ["cindersap forest"] = "Forest",
+            ["secret woods"] = "Woods", ["woods"] = "Woods",
+            ["mountain"] = "Mountain",
+            ["town"] = "Town", ["pelican town"] = "Town",
+            ["railroad"] = "Railroad",
+            ["farm"] = "Farm",
+            ["farmhouse"] = "FarmHouse", ["farm house"] = "FarmHouse", ["home"] = "FarmHouse", ["house"] = "FarmHouse",
+            ["greenhouse"] = "Greenhouse", ["green house"] = "Greenhouse"
+        };
 
         private static void SetSkillXp(JToken action)
         {
