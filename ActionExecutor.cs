@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Microsoft.Xna.Framework;
 using Newtonsoft.Json.Linq;
 using StardewModdingAPI;
@@ -39,11 +40,14 @@ namespace StardewAI
             JObject response;
             try
             {
-                response = JObject.Parse(aiResponseJson);
+                response = JObject.Parse(ExtractJson(aiResponseJson));
             }
             catch (Exception ex)
             {
                 Monitor.Log($"Failed to parse AI response: {ex.Message}\nRaw: {aiResponseJson}", LogLevel.Error);
+                Game1.addHUDMessage(new HUDMessage("The AI reply didn't make sense, so nothing was changed. Try rephrasing.", HUDMessage.error_type));
+                try { Game1.chatBox?.addErrorMessage("AI: couldn't understand the model's reply — nothing was changed."); }
+                catch { /* chat box not ready */ }
                 return;
             }
 
@@ -82,6 +86,7 @@ namespace StardewAI
                         case "setDay": SetDay(action); break;
                         case "warp": Warp(action); break;
                         case "setSkillXp": SetSkillXp(action); break;
+                        case "setSkillLevel": SetSkillLevel(action); break;
                         case "setFriendship": SetFriendship(action); break;
                         case "waterAllCrops": WaterAllCrops(); break;
                         case "clearCrops": ClearCrops(); break;
@@ -110,11 +115,31 @@ namespace StardewAI
 
         private static void AddItem(JToken action)
         {
+            string itemName = (action["itemName"] ?? action["name"] ?? action["item"])?.ToString()?.Trim();
             string itemId = action["itemId"]?.ToString()?.Trim();
             int quantity = action["quantity"]?.Value<int>() ?? 1;
+            quantity = Math.Clamp(quantity, 1, 999);
+
+            // 0) Prefer the NAME. Small models are bad at recalling numeric ids (e.g. they answer
+            //    "Prismatic Shard" with 499 = Ancient Seeds), but good at repeating the name the
+            //    player typed. Resolve the name against the game's real item registry first.
+            if (!string.IsNullOrEmpty(itemName))
+            {
+                string resolved = ItemResolver.Resolve(itemName, strict: false);
+                if (resolved != null)
+                {
+                    if (!string.IsNullOrEmpty(itemId) && !string.Equals(ItemRegistry.QualifyItemId(itemId), resolved, StringComparison.OrdinalIgnoreCase))
+                        Monitor.Log($"Model id '{itemId}' disagreed with name '{itemName}'; using name -> {resolved}.", LogLevel.Debug);
+                    itemId = resolved;
+                }
+            }
+            // The model sometimes puts a name in the id field ("itemId": "Diamond").
+            else if (!string.IsNullOrEmpty(itemId) && !Regex.IsMatch(itemId, @"^(\(\w+\))?\d+$"))
+            {
+                itemId = ItemResolver.Resolve(itemId, strict: false) ?? itemId;
+            }
 
             if (string.IsNullOrEmpty(itemId)) return;
-            quantity = Math.Clamp(quantity, 1, 999);
 
             // 1) Reject explicitly blocked items (matched against bare and qualified ids).
             if (IsBlocked(itemId))
@@ -167,15 +192,24 @@ namespace StardewAI
 
         private static void RemoveItem(JToken action)
         {
-            string itemName = action["itemName"]?.ToString()?.ToLower();
+            string itemName = (action["itemName"] ?? action["name"])?.ToString()?.ToLower();
             if (string.IsNullOrEmpty(itemName)) return;
+            int? quantity = action["quantity"]?.Value<int>();
 
             foreach (var item in Game1.player.Items)
             {
                 if (item != null && item.DisplayName.ToLower().Contains(itemName))
                 {
-                    Game1.player.removeItemFromInventory(item);
-                    Monitor.Log($"Removed {item.DisplayName}", LogLevel.Info);
+                    if (quantity.HasValue && quantity.Value > 0 && quantity.Value < item.Stack)
+                    {
+                        item.Stack -= quantity.Value;
+                        Monitor.Log($"Removed {quantity.Value}x {item.DisplayName}", LogLevel.Info);
+                    }
+                    else
+                    {
+                        Game1.player.removeItemFromInventory(item);
+                        Monitor.Log($"Removed {item.DisplayName}", LogLevel.Info);
+                    }
                     break;
                 }
             }
@@ -405,46 +439,124 @@ namespace StardewAI
             ["greenhouse"] = "Greenhouse", ["green house"] = "Greenhouse"
         };
 
-        private static void SetSkillXp(JToken action)
-        {
-            string skillName = action["skill"]?.ToString()?.ToLower();
-            int xp = action["xp"]?.Value<int>() ?? 0;
-            
-            if (string.IsNullOrEmpty(skillName) || xp <= 0) return;
+        // Vanilla XP thresholds for levels 0..10.
+        private static readonly int[] LevelXp = { 0, 100, 380, 770, 1300, 2150, 3300, 4800, 6900, 10000, 15000 };
+        private static readonly string[] SkillNames = { "farming", "fishing", "foraging", "mining", "combat" };
 
-            int skillIndex = -1;
+        /// <summary>Map a skill name to its index, or -2 for "all". -1 if unknown.</summary>
+        private static int SkillIndex(string skillName)
+        {
             switch (skillName)
             {
-                case "farming": skillIndex = 0; break;
-                case "fishing": skillIndex = 1; break;
-                case "foraging": skillIndex = 2; break;
-                case "mining": skillIndex = 3; break;
-                case "combat": skillIndex = 4; break;
+                case "farming": return 0;
+                case "fishing": return 1;
+                case "foraging": return 2;
+                case "mining": return 3;
+                case "combat": return 4;
+                case "all": case "all skills": case "every": case "everything": case "skills": return -2;
+                default: return -1;
+            }
+        }
+
+        private static IEnumerable<int> SkillTargets(string skillName)
+        {
+            int idx = SkillIndex(skillName);
+            if (idx == -2) return new[] { 0, 1, 2, 3, 4 };
+            if (idx >= 0) return new[] { idx };
+            return Array.Empty<int>();
+        }
+
+        private static void SetSkillXp(JToken action)
+        {
+            string skillName = action["skill"]?.ToString()?.ToLower()?.Trim();
+            int xp = action["xp"]?.Value<int>() ?? 0;
+
+            if (string.IsNullOrEmpty(skillName) || xp <= 0) return;
+
+            foreach (int i in SkillTargets(skillName))
+            {
+                Game1.player.gainExperience(i, xp);
+                Monitor.Log($"Added {xp} XP to {SkillNames[i]}", LogLevel.Info);
+            }
+        }
+
+        /// <summary>
+        /// Raise a skill (or "all") to an exact level by granting exactly the XP needed. Going
+        /// through gainExperience keeps vanilla behavior: level-up + profession choice at bedtime.
+        /// Never lowers a level.
+        /// </summary>
+        private static void SetSkillLevel(JToken action)
+        {
+            string skillName = action["skill"]?.ToString()?.ToLower()?.Trim() ?? "all";
+            int level = Math.Clamp(action["level"]?.Value<int>() ?? 10, 0, 10);
+            int target = LevelXp[level];
+
+            var raised = new List<string>();
+            foreach (int i in SkillTargets(skillName))
+            {
+                int current = Game1.player.experiencePoints[i];
+                if (current < target)
+                {
+                    Game1.player.gainExperience(i, target - current);
+                    raised.Add(SkillNames[i]);
+                }
             }
 
-            if (skillIndex != -1)
+            if (raised.Count > 0)
             {
-                Game1.player.gainExperience(skillIndex, xp);
-                Monitor.Log($"Added {xp} XP to {skillName}", LogLevel.Info);
+                Monitor.Log($"Raised {string.Join(", ", raised)} to level {level}.", LogLevel.Info);
+                Game1.addHUDMessage(new HUDMessage($"Skills reach level {level} — sleep to pick your professions.", HUDMessage.newQuest_type));
+            }
+            else
+            {
+                Monitor.Log($"setSkillLevel: nothing to raise for '{skillName}' to {level}.", LogLevel.Debug);
             }
         }
 
         private static void SetFriendship(JToken action)
         {
-            string npc = action["npc"]?.ToString();
+            string npc = action["npc"]?.ToString()?.Trim();
             int points = action["points"]?.Value<int>() ?? 0;
 
             if (string.IsNullOrEmpty(npc)) return;
 
-            if (Game1.player.friendshipData.ContainsKey(npc))
+            // Case-insensitive match against NPCs the player has met.
+            string key = Game1.player.friendshipData.Keys
+                .FirstOrDefault(k => string.Equals(k, npc, StringComparison.OrdinalIgnoreCase));
+
+            if (key != null)
             {
-                Game1.player.friendshipData[npc].Points = Math.Max(0, Game1.player.friendshipData[npc].Points + points);
-                Monitor.Log($"Friendship with {npc} adjusted by {points}", LogLevel.Info);
+                var f = Game1.player.friendshipData[key];
+                // Vanilla caps: 8 hearts for a datable NPC you aren't dating (the game clamps the
+                // rest away and shows the last 2 hearts locked), 10 for everyone else, 14 when
+                // dating/engaged/married.
+                bool romantic = f.IsDating() || f.IsEngaged() || f.IsMarried();
+                bool datable = Game1.getCharacterFromName(key)?.datable.Value == true;
+                int cap = romantic ? 3500 : datable ? 2000 : 2500;
+                int? hearts = action["hearts"]?.Value<int>();
+                int newPoints = hearts.HasValue ? hearts.Value * 250 : f.Points + points;
+                if (newPoints > cap && datable && !romantic)
+                    Game1.addHUDMessage(new HUDMessage($"{key} maxes at 8 hearts until you give them a bouquet.", HUDMessage.newQuest_type));
+                f.Points = Math.Clamp(newPoints, 0, cap);
+                Monitor.Log($"Friendship with {key} now {f.Points} points", LogLevel.Info);
             }
             else
             {
                 Monitor.Log($"NPC {npc} not found in friendship data", LogLevel.Warn);
+                Game1.addHUDMessage(new HUDMessage($"You haven't met '{npc}' yet.", HUDMessage.error_type));
             }
+        }
+
+        /// <summary>True if a friendly or internal location name resolves (used by the instant parser).</summary>
+        public static bool CanResolveLocation(string name) => ResolveLocationName(name) != null;
+
+        /// <summary>Pull a JSON object out of a reply that may be wrapped in ``` fences or chatter.</summary>
+        private static string ExtractJson(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return raw;
+            int start = raw.IndexOf('{');
+            int end = raw.LastIndexOf('}');
+            return start >= 0 && end > start ? raw.Substring(start, end - start + 1) : raw;
         }
 
         private static void WaterAllCrops()

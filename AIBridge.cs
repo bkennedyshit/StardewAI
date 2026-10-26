@@ -40,6 +40,17 @@ namespace StardewAI
 
         private string Url => Config.BaseUrl.TrimEnd('/') + "/chat/completions";
 
+        /// <summary>Player-facing message for a non-success HTTP status from the endpoint.</summary>
+        private string DescribeHttpError(System.Net.HttpStatusCode status, string body)
+        {
+            int code = (int)status;
+            if (code == 404 && body != null && body.IndexOf("not found", StringComparison.OrdinalIgnoreCase) >= 0)
+                return $"Model '{Config.Model}' isn't installed. Run: ollama pull {Config.Model} — or set Model in config.json to one from 'ollama list'.";
+            if (code == 401 || code == 403)
+                return "The AI endpoint rejected the request. Check ApiKey in config.json.";
+            return $"The AI model returned an error ({code}). See the SMAPI log for details.";
+        }
+
         /// <summary>Map an exception to an honest, actionable player-facing message.</summary>
         private string DescribeError(Exception ex)
         {
@@ -71,7 +82,7 @@ namespace StardewAI
                 if (!response.IsSuccessStatusCode)
                 {
                     Monitor.Log($"API error ({response.StatusCode}): {responseStr}", LogLevel.Error);
-                    LastError = $"The AI model returned an error ({(int)response.StatusCode}). Is the model name in config.json correct?";
+                    LastError = DescribeHttpError(response.StatusCode, responseStr);
                     return null;
                 }
 
@@ -117,7 +128,7 @@ namespace StardewAI
                 {
                     var err = await response.Content.ReadAsStringAsync();
                     Monitor.Log($"API error ({response.StatusCode}): {err}", LogLevel.Error);
-                    LastError = $"The AI model returned an error ({(int)response.StatusCode}). Is the model name in config.json correct?";
+                    LastError = DescribeHttpError(response.StatusCode, err);
                     return null;
                 }
 
@@ -243,8 +254,13 @@ namespace StardewAI
             }
             else
             {
-                // Constrain Ollama / compatible endpoints to emit JSON.
+                // Constrain output to JSON. Ollama's /v1 endpoint honors OpenAI's response_format
+                // (it ignores the native "format" key there); "format" is kept for other servers
+                // that read it. response_format json_object is only sent to Ollama because some
+                // servers (e.g. LM Studio) reject that type.
                 body["format"] = "json";
+                if (LooksLikeOllama)
+                    body["response_format"] = new Dictionary<string, object> { ["type"] = "json_object" };
             }
 
             // For local Ollama, keep the model loaded for the session so a normal request doesn't

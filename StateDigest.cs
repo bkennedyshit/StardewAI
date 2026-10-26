@@ -144,7 +144,11 @@ namespace StardewAI
                         {
                             summary.NeedWater++;
                         }
-                        if (dirt.crop.fullyGrown.Value)
+                        var crop = dirt.crop;
+                        bool ready = !crop.dead.Value
+                            && crop.currentPhase.Value >= crop.phaseDays.Count - 1
+                            && (!crop.fullyGrown.Value || crop.dayOfCurrentPhase.Value <= 0);
+                        if (ready)
                         {
                             summary.ReadyToHarvest++;
                         }

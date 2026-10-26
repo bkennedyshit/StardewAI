@@ -16,15 +16,16 @@ namespace StardewAI
         {
             return new JArray
             {
-                Tool("addItem", "Give the player an item by id.", new JObject
+                Tool("addItem", "Give the player an item by its English name (the mod looks up the real item).", new JObject
                 {
-                    ["itemId"] = Prop("string", "Item id, e.g. '499'."),
-                    ["quantity"] = Prop("integer", "How many to give.")
-                }, "itemId"),
+                    ["itemName"] = Prop("string", "Item name exactly as the player said it, e.g. 'Prismatic Shard'."),
+                    ["quantity"] = Prop("integer", "How many to give (1-999).")
+                }, "itemName"),
 
                 Tool("removeItem", "Remove an item from the player's inventory by name.", new JObject
                 {
-                    ["itemName"] = Prop("string", "Display name (partial match).")
+                    ["itemName"] = Prop("string", "Display name (partial match)."),
+                    ["quantity"] = Prop("integer", "How many to remove. Omit to remove the whole stack.")
                 }, "itemName"),
 
                 Tool("setWeather", "Set the current weather.", new JObject
@@ -57,17 +58,24 @@ namespace StardewAI
                     ["location"] = Prop("string", "Location name, e.g. 'Saloon', 'Farm'.")
                 }, "location"),
 
-                Tool("setSkillXp", "Grant skill XP.", new JObject
+                Tool("setSkillLevel", "Raise a skill (or all skills) to an exact level. Use for 'level 10' / 'max my skills'.", new JObject
                 {
-                    ["skill"] = Enum("Skill name.", "farming", "fishing", "foraging", "mining", "combat"),
+                    ["skill"] = Enum("Skill name, or 'all' for every skill.", "farming", "fishing", "foraging", "mining", "combat", "all"),
+                    ["level"] = Prop("integer", "Target level 0-10.")
+                }, "skill", "level"),
+
+                Tool("setSkillXp", "Grant a specific amount of skill XP.", new JObject
+                {
+                    ["skill"] = Enum("Skill name, or 'all'.", "farming", "fishing", "foraging", "mining", "combat", "all"),
                     ["xp"] = Prop("integer", "XP to add.")
                 }, "skill", "xp"),
 
-                Tool("setFriendship", "Adjust friendship points with an NPC.", new JObject
+                Tool("setFriendship", "Set friendship with an NPC to a number of hearts, or add points.", new JObject
                 {
                     ["npc"] = Prop("string", "NPC name."),
-                    ["points"] = Prop("integer", "Signed friendship points.")
-                }, "npc", "points"),
+                    ["hearts"] = Prop("integer", "Set to this many hearts (0-10)."),
+                    ["points"] = Prop("integer", "Signed points to add instead (250 = 1 heart).")
+                }, "npc"),
 
                 Tool("waterAllCrops", "Water every dry crop on the farm.", new JObject()),
 

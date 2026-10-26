@@ -25,6 +25,14 @@ namespace StardewAI
         /// </summary>
         public bool WarmUpModel { get; set; } = true;
 
+        /// <summary>
+        /// Handle common requests ("give me 10 diamonds", "max all skills", "make it rain", "warp to
+        /// the beach", "give me 50k") instantly with a built-in parser — no model call, no CPU/GPU
+        /// load. Anything it doesn't fully understand still goes to the AI. Set false to send
+        /// everything to the model.
+        /// </summary>
+        public bool EnableQuickCommands { get; set; } = true;
+
         // --- Phase 2 options ---
 
         /// <summary>Stream the model response live into the chat box as it is generated.</summary>

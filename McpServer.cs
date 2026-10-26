@@ -100,7 +100,7 @@ namespace StardewAI
                     {
                         ["protocolVersion"] = ProtocolVersion,
                         ["capabilities"] = new JObject { ["tools"] = new JObject() },
-                        ["serverInfo"] = new JObject { ["name"] = "StardewAI", ["version"] = "0.2.0" }
+                        ["serverInfo"] = new JObject { ["name"] = "StardewAI", ["version"] = "0.3.0" }
                     }));
                     break;
 

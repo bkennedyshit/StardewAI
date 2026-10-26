@@ -29,7 +29,11 @@ namespace StardewAI
         private static GameLocation Location;
 
         // Work list (tiles still needing the chore this pass)
-        private static readonly Queue<Vector2> Pending = new Queue<Vector2>();
+        private static readonly List<Vector2> Pending = new List<Vector2>();
+
+        // Waypoints (pixel positions) from the elf to the current target, from BFS pathfinding.
+        private static readonly Queue<Vector2> Path = new Queue<Vector2>();
+        private const int MaxPathNodes = 8000;
 
         // Helper sprite + movement state
         private static TemporaryAnimatedSprite Helper;
@@ -104,6 +108,7 @@ namespace StardewAI
             Repeat = false;
             Area = null;
             Pending.Clear();
+            Path.Clear();
             TargetPixel = null;
             DespawnHelper();
             Location = null;
@@ -140,8 +145,8 @@ namespace StardewAI
                 }
             }
 
-            // Walk toward the current target tile.
-            Vector2 dest = TargetPixel.Value;
+            // Walk toward the next waypoint (or straight to the target if no path was found).
+            Vector2 dest = Path.Count > 0 ? Path.Peek() : TargetPixel.Value;
             Vector2 delta = dest - HelperPixel;
             float dist = delta.Length();
 
@@ -152,6 +157,13 @@ namespace StardewAI
                 HelperPixel += step * Math.Min(MoveSpeed, dist);
                 UpdateHelperSprite(step.X);
                 return;
+            }
+
+            if (Path.Count > 0)
+            {
+                Path.Dequeue();
+                if (Path.Count > 0)
+                    return; // more waypoints to go
             }
 
             // Arrived — perform the chore on this tile, then clear the target.
@@ -174,7 +186,7 @@ namespace StardewAI
                     continue;
 
                 if (TileNeedsWork(pair.Value))
-                    Pending.Enqueue(tile);
+                    Pending.Add(tile);
             }
         }
 
@@ -207,15 +219,118 @@ namespace StardewAI
 
             while (Pending.Count > 0)
             {
-                Vector2 tile = Pending.Dequeue();
+                // Nearest-first so the elf sweeps the field naturally instead of zig-zagging.
+                Vector2 here = HelperTile();
+                int best = 0;
+                float bestDist = float.MaxValue;
+                for (int i = 0; i < Pending.Count; i++)
+                {
+                    float d = Vector2.DistanceSquared(here, Pending[i]);
+                    if (d < bestDist) { bestDist = d; best = i; }
+                }
+
+                Vector2 tile = Pending[best];
+                Pending.RemoveAt(best);
+
                 if (Location.terrainFeatures.TryGetValue(tile, out var feature) && TileNeedsWork(feature))
                 {
                     TargetTile = tile;
                     TargetPixel = new Vector2(tile.X * 64f, tile.Y * 64f);
+                    BuildPath(here, tile);
                     return true;
                 }
             }
             return false;
+        }
+
+        private static Vector2 HelperTile() =>
+            new Vector2((int)((HelperPixel.X + 32f) / 64f), (int)((HelperPixel.Y + 32f) / 64f));
+
+        /// <summary>
+        /// Breadth-first search over walkable tiles from the elf to the target. Fills <see cref="Path"/>
+        /// with pixel waypoints. If no path exists (or the search is too large), Path stays empty and
+        /// the elf hops straight there — the same as a vanilla Junimo would look.
+        /// </summary>
+        private static void BuildPath(Vector2 start, Vector2 goal)
+        {
+            Path.Clear();
+            if (start == goal || Location == null)
+                return;
+
+            var cameFrom = new Dictionary<Vector2, Vector2>();
+            var frontier = new Queue<Vector2>();
+            frontier.Enqueue(start);
+            cameFrom[start] = start;
+
+            var dirs = new[] { new Vector2(1, 0), new Vector2(-1, 0), new Vector2(0, 1), new Vector2(0, -1) };
+            bool found = false;
+
+            while (frontier.Count > 0 && cameFrom.Count < MaxPathNodes)
+            {
+                var cur = frontier.Dequeue();
+                if (cur == goal) { found = true; break; }
+
+                foreach (var d in dirs)
+                {
+                    var next = cur + d;
+                    if (cameFrom.ContainsKey(next))
+                        continue;
+                    if (next != goal && !IsWalkable(next))
+                        continue;
+                    cameFrom[next] = cur;
+                    frontier.Enqueue(next);
+                }
+            }
+
+            if (!found)
+                return;
+
+            var tiles = new List<Vector2>();
+            for (var t = goal; t != start; t = cameFrom[t])
+                tiles.Add(t);
+            tiles.Reverse();
+            foreach (var t in tiles)
+                Path.Enqueue(new Vector2(t.X * 64f, t.Y * 64f));
+        }
+
+        private static bool IsWalkable(Vector2 tile)
+        {
+            try
+            {
+                var loc = Location;
+                int w = loc.map?.Layers?[0]?.LayerWidth ?? 0;
+                int h = loc.map?.Layers?[0]?.LayerHeight ?? 0;
+                if (tile.X < 0 || tile.Y < 0 || tile.X >= w || tile.Y >= h)
+                    return false;
+
+                if (!loc.isTilePassable(new xTile.Dimensions.Location((int)tile.X, (int)tile.Y), Game1.viewport))
+                    return false;
+
+                if (loc.objects.TryGetValue(tile, out var obj) && !obj.isPassable())
+                    return false;
+
+                if (loc.terrainFeatures.TryGetValue(tile, out var tf) && !tf.isPassable())
+                    return false;
+
+                foreach (var b in loc.buildings)
+                    if (b.occupiesTile(tile))
+                        return false;
+
+                foreach (var rc in loc.resourceClumps)
+                    if (rc.occupiesTile((int)tile.X, (int)tile.Y))
+                        return false;
+
+                var rect = new Rectangle((int)tile.X * 64, (int)tile.Y * 64, 64, 64);
+                foreach (var ltf in loc.largeTerrainFeatures)
+                    if (ltf.getBoundingBox().Intersects(rect))
+                        return false;
+
+                return true;
+            }
+            catch
+            {
+                return true; // never let pathfinding break the elf
+            }
         }
 
         private static void PerformChoreOnTile(Vector2 tile)

@@ -44,6 +44,26 @@ StardewAI works best with Ollama, a tool for running local LLMs.
 - Press **T** (default chat key) or **F8** (configurable fallback key) to open the chat window.
 - Type a request in plain English! (e.g., "Give me 10,000g and make it rain tomorrow", or "Warp me to the Saloon and boost my fishing skill").
 
+### Instant commands (no AI needed)
+Common requests are handled **instantly by the mod itself** — no model call, no waiting, no CPU/GPU load. These work even on a weak PC or with Ollama turned off:
+
+| Say something like | What happens |
+|---|---|
+| `give me 10 prismatic shards` / `5 diamonds and 3 iridium bars` | Items, looked up by their real in-game name |
+| `give me 50k` / `add 1,000,000 gold` | Money |
+| `max all skills` / `all skills to level 10` / `level 8 fishing` | Skills set to that level (sleep to pick professions) |
+| `make it rain` / `sunny` / `storm` / `snow` | Weather |
+| `make it summer` | Season |
+| `set time to 6pm` | Time of day |
+| `warp to the beach` / `take me to the saloon` | Warp |
+| `water my crops` | Waters every crop |
+| `send an elf to water my crops` / `have the elf harvest everything every day` / `stop the elf` | Elf helper over the whole farm |
+| `max friendship with Abigail` / `make Sebastian love me` / `5 hearts with Haley` | Friendship hearts (NPCs you've met) |
+
+Chain them with "and" or commas: `give me 50k, 10 prismatic shards and make it rain`. Anything else ("send an elf to water the east field", "what should I plant?") goes to the AI as normal.
+
+Items are always resolved **by name** against the game's own item list, so the AI can't hand you the wrong item because it misremembered a numeric id.
+
 ## Configuration (`config.json`)
 
 | Property | Default | Description |
@@ -57,6 +77,7 @@ StardewAI works best with Ollama, a tool for running local LLMs.
 | `HistoryTurns` | `6` | How many recent message turns to keep for context. |
 | `TimeoutSeconds` | `60` | How long to wait for the model before giving up. Generous so a cold model load doesn't fail. |
 | `WarmUpModel` | `true` | Send one tiny background request when a save loads so the model is warm before your first request (avoids a cold-load timeout). |
+| `EnableQuickCommands` | `true` | Handle common requests instantly with a built-in parser — no model call, no CPU/GPU load. Anything it doesn't fully understand still goes to the AI. |
 | `Stream` | `true` | Stream the model's reply live into a HUD line as it types. |
 | `UseFunctionCalling` | `false` | Use OpenAI-style tool calling (`tools` array) instead of a single JSON blob. Disables streaming when on. |
 | `EnableOverlay` | `true` | Serve a local OBS browser-source overlay (digest + last action). |
@@ -67,7 +88,7 @@ StardewAI works best with Ollama, a tool for running local LLMs.
 
 ## Phase 2 Features
 
-- **Elf laborer.** Ask for a helper ("send an elf to water the east field", "have a farmhand harvest everything") and a Junimo-style helper walks your farm and does it tile-by-tile. The model assigns the task once; all the labor is deterministic C# (no AI in the loop). Chores: `water`, `harvest`, `refill`. Say "stop the elf" to cancel.
+- **Elf laborer.** Ask for a helper ("send an elf to water the east field", "have a farmhand harvest everything") and a Junimo-style helper walks your farm and does it tile-by-tile, pathing around fences, buildings, trees and rocks and working the nearest tile first. The model assigns the task once; all the labor is deterministic C# (no AI in the loop). Chores: `water`, `harvest`, `refill`. Say "stop the elf" to cancel.
 - **Streaming.** With `Stream` on, the AI's reply types out live in a HUD line, then prints into the chat box.
 - **Function calling.** Set `UseFunctionCalling` to use the OpenAI `tools` protocol instead of the JSON blob.
 - **OBS overlay.** With `EnableOverlay` on, add a Browser source in OBS pointed at `http://localhost:8473/` to show a live farm digest + the last action on stream.
@@ -89,7 +110,11 @@ Rough VRAM guide (model + a little headroom):
 | `hermes3:8b` (default) | ~6 GB | Best quality/reliability balance. |
 | `qwen2.5-coder:7b` | ~5 GB | Very strong JSON adherence. |
 
-**No capable GPU?** It still works on CPU, but expect replies to take much longer (tens of seconds), and Ollama will use your CPU cores during inference. If that's your situation, use a smaller model (`qwen2.5:3b-instruct`) and raise `TimeoutSeconds`.
+**No capable GPU?** It still works on CPU, but the model will be slow (often 30s+ per reply on a 4-core CPU), your CPU will run hot while it thinks, and with 8 GB of RAM an 8B model barely fits next to the game. Recommendations:
+- Lean on the **instant commands** above — they skip the model entirely.
+- Use the smallest model: `ollama pull qwen2.5:3b-instruct`, set `"Model": "qwen2.5:3b-instruct"`, and raise `TimeoutSeconds` to `120`.
+- Install Ollama's models on an SSD if you have one; loading from an HDD makes the first request very slow.
+- Small models on CPU are also less accurate for free-form requests. That's a hardware limit, not a mod bug — a GPU with 6+ GB VRAM makes a big difference.
 
 ## Troubleshooting
 
